@@ -7,100 +7,106 @@ from pathlib import Path
 import signal
 import psutil
 import time
-import requests
+import shutil
+import sys
 
 # Konfiguration
 OUTPUT_PATH = "output"  # Der Pfad zum Output-Ordner
 ROOP_PROCESS = None
 ADMIN_PORT = 7861
 ROOP_PORT = 7860
-ROOP_PUBLIC_URL = None
 
 def create_zip_from_output():
     """Erstellt ein Zip-Archiv aus dem Output-Ordner"""
     if not os.path.exists(OUTPUT_PATH):
         return "Output-Ordner existiert nicht!"
     
-    zip_path = os.path.join(OUTPUT_PATH, "output_files.zip")
+    # Erstelle einen temporären Ordner für die ZIP-Datei
+    temp_dir = os.path.join(OUTPUT_PATH, "temp_zip")
+    os.makedirs(temp_dir, exist_ok=True)
     
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for root, dirs, files in os.walk(OUTPUT_PATH):
-            for file in files:
-                if file != "output_files.zip":  # Exclude the zip file itself
+    zip_path = os.path.join(temp_dir, "output_files.zip")
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(OUTPUT_PATH):
+                if root == temp_dir:  # Überspringe den temp_zip Ordner
+                    continue
+                for file in files:
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, OUTPUT_PATH)
-                    zipf.write(file_path, arcname)
+                    try:
+                        zipf.write(file_path, arcname)
+                    except Exception as e:
+                        print(f"Fehler beim Hinzufügen von {file_path}: {str(e)}")
+                        continue
+    except Exception as e:
+        print(f"Fehler beim Erstellen des ZIP-Archivs: {str(e)}")
+        return None
     
     return zip_path
 
 def kill_process_on_port(port):
     """Beendet den Prozess auf dem angegebenen Port"""
-    for proc in psutil.process_iter(['pid', 'name', 'connections']):
-        try:
-            for conns in proc.connections(kind='inet'):
-                if conns.laddr.port == port:
-                    parent = psutil.Process(proc.pid)
-                    for child in parent.children(recursive=True):
-                        child.terminate()
-                    parent.terminate()
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-
-def wait_for_gradio_link(timeout=60):
-    """Wartet auf den öffentlichen Gradio Link"""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            # Lese die letzten Zeilen der Konsolenausgabe
-            process = subprocess.Popen(['tail', '-n', '20', 'roop_output.log'], stdout=subprocess.PIPE)
-            output = process.stdout.read().decode()
-            
-            # Suche nach dem Public Link
-            for line in output.split('\n'):
-                if "gradio.live" in line:
-                    return line.strip()
-        except:
-            pass
-        time.sleep(1)
-    return None
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'connections']):
+            try:
+                for conns in proc.connections(kind='inet'):
+                    if conns.laddr.port == port:
+                        parent = psutil.Process(proc.pid)
+                        children = parent.children(recursive=True)
+                        for child in children:
+                            try:
+                                child.terminate()
+                            except:
+                                pass
+                        parent.terminate()
+                        time.sleep(1)
+                        if parent.is_running():
+                            parent.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+    except Exception as e:
+        print(f"Fehler beim Beenden der Prozesse: {str(e)}")
 
 def restart_roop():
     """Startet den Roop-Prozess neu"""
-    global ROOP_PROCESS, ROOP_PUBLIC_URL
+    global ROOP_PROCESS
     
-    # Beende alle existierenden Prozesse auf den relevanten Ports
-    kill_process_on_port(ROOP_PORT)
-    
-    # Warte kurz
-    time.sleep(2)
-    
-    # Starte Roop neu mit Share Option
-    ROOP_PROCESS = subprocess.Popen(
-        ['python', 'run.py'],
-        env={**os.environ, 'ROOP_SHARE': 'true'},  # Setze Umgebungsvariable
-        stdout=open('roop_output.log', 'w'),
-        stderr=subprocess.STDOUT
-    )
-    
-    # Warte kurz damit Roop starten kann
-    time.sleep(10)
-    
-    # Versuche den öffentlichen Link zu bekommen
     try:
-        with open('roop_output.log', 'r') as f:
-            for line in f:
-                if "gradio.live" in line:
-                    ROOP_PUBLIC_URL = line.strip()
-                    return ROOP_PUBLIC_URL
-    except:
-        pass
-    
-    return "Roop wurde neu gestartet. Bitte warte einen Moment bis der öffentliche Link erscheint."
-
-def get_roop_interface():
-    """Gibt die URL zum Roop Interface zurück"""
-    global ROOP_PUBLIC_URL
-    return ROOP_PUBLIC_URL if ROOP_PUBLIC_URL else "Warte auf öffentlichen Link..."
+        # Beende alle existierenden Prozesse
+        kill_process_on_port(ROOP_PORT)
+        if ROOP_PROCESS:
+            try:
+                ROOP_PROCESS.terminate()
+                time.sleep(1)
+                if ROOP_PROCESS.poll() is None:
+                    ROOP_PROCESS.kill()
+            except:
+                pass
+        
+        # Warte kurz
+        time.sleep(2)
+        
+        # Setze die Umgebungsvariable für Server Share
+        env = os.environ.copy()
+        env['ROOP_SERVER_SHARE'] = 'true'
+        
+        # Starte Roop neu
+        if os.name == 'nt':  # Windows
+            ROOP_PROCESS = subprocess.Popen(['python', 'run.py'], 
+                                          creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                                          env=env)
+        else:  # Linux/Mac
+            ROOP_PROCESS = subprocess.Popen(['python', 'run.py'],
+                                          preexec_fn=os.setsid,
+                                          env=env)
+        
+        time.sleep(5)  # Warte bis Roop gestartet ist
+        
+        return "Roop wurde neu gestartet. Das Interface ist unter http://localhost:7860 verfügbar."
+    except Exception as e:
+        return f"Fehler beim Neustarten von Roop: {str(e)}"
 
 # Erstelle das Gradio Interface
 with gr.Blocks(title="Roop Admin Interface") as admin_interface:
@@ -108,50 +114,44 @@ with gr.Blocks(title="Roop Admin Interface") as admin_interface:
         gr.Markdown("# Roop Admin Interface")
     
     with gr.Row():
-        with gr.Column():
+        with gr.Column(scale=1):
+            gr.Markdown("""
+            ## Download
+            Lade alle verarbeiteten Dateien als ZIP herunter
+            """)
             download_btn = gr.Button("Download Output Files", variant="primary")
-            output_file = gr.File(label="Downloaded Files")
+            output_file = gr.File(label="Downloaded Files", type="filepath")  # Korrigierter type-Parameter
     
     with gr.Row():
-        with gr.Column():
+        with gr.Column(scale=1):
+            gr.Markdown("""
+            ## Roop Verwaltung
+            Verwalte den Roop-Prozess und öffne das Interface
+            """)
             restart_btn = gr.Button("Restart Roop", variant="primary")
-            link_output = gr.Textbox(label="Roop Interface Link", interactive=False)
-            open_interface_btn = gr.Button("Open Roop Interface")
+            status_output = gr.Textbox(label="Status", interactive=False)
+            gr.Markdown("Das Roop Interface ist verfügbar unter:")
+            gr.Markdown("http://localhost:7860")
     
     # Event Handler
     download_btn.click(create_zip_from_output, outputs=output_file)
-    restart_btn.click(restart_roop, outputs=link_output)
-    open_interface_btn.click(fn=lambda: webbrowser.open(ROOP_PUBLIC_URL if ROOP_PUBLIC_URL else ""))
+    restart_btn.click(restart_roop, outputs=status_output)
 
 # Starte das Admin Interface
 if __name__ == "__main__":
-    # Modifiziere die run.py um Share zu aktivieren
-    with open('run.py', 'r') as f:
-        content = f.read()
-    
-    if 'share=True' not in content:
-        content = content.replace('server_share=False', 'server_share=True')
-        with open('run.py', 'w') as f:
-            f.write(content)
-    
     # Starte zuerst Roop
-    ROOP_PROCESS = subprocess.Popen(
-        ['python', 'run.py'],
-        stdout=open('roop_output.log', 'w'),
-        stderr=subprocess.STDOUT
-    )
+    env = os.environ.copy()
+    env['ROOP_SERVER_SHARE'] = 'true'
+    
+    ROOP_PROCESS = subprocess.Popen(['python', 'run.py'], env=env)
     
     # Warte kurz damit Roop starten kann
-    time.sleep(10)
-    
-    # Hole den öffentlichen Link
-    try:
-        with open('roop_output.log', 'r') as f:
-            for line in f:
-                if "gradio.live" in line:
-                    ROOP_PUBLIC_URL = line.strip()
-    except:
-        pass
+    time.sleep(5)
     
     # Dann starte das Admin Interface
-    admin_interface.launch(server_port=ADMIN_PORT, share=True, show_error=True)
+    admin_interface.launch(
+        server_name="0.0.0.0",  # Erlaube externe Verbindungen
+        server_port=ADMIN_PORT,
+        share=True,  # Versuche einen öffentlichen Link zu erstellen
+        show_error=True
+    )
