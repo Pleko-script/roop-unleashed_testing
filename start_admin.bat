@@ -1,10 +1,9 @@
 @echo off
 
-:: Starte Roop
-start /B python run.py
+:: Setze Umgebungsvariable für Sharing
+set ROOP_SHARE=true
 
-:: Warte kurz
-timeout /t 2
-
-:: Starte Admin Interface
+:: Starte das Admin Interface
 python admin.py
+
+pause
