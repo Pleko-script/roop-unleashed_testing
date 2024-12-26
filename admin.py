@@ -4,9 +4,10 @@ import zipfile
 import subprocess
 import time
 from google.colab import files
+import signal
 
 # Konfiguration
-OUTPUT_PATH = "output"  
+OUTPUT_PATH = "output"
 ROOP_PROCESS = None
 
 def create_zip_from_output():
@@ -31,40 +32,29 @@ def create_zip_from_output():
         return f"Fehler beim Erstellen des ZIP-Archivs: {str(e)}"
 
 def restart_roop():
-    """Startet den Roop-Prozess neu"""
-    global ROOP_PROCESS
-    
+    """Startet den Roop-Prozess in Colab neu"""
     try:
-        # Beende den existierenden Prozess
-        if ROOP_PROCESS:
-            ROOP_PROCESS.terminate()
-            time.sleep(1)
-            if ROOP_PROCESS.poll() is None:
-                ROOP_PROCESS.kill()
+        # Finde und beende alle Python-Prozesse 
+        os.system("pkill -9 python")
         
         # Warte kurz
         time.sleep(2)
         
-        # Setze die Umgebungsvariable für Server Share
-        env = os.environ.copy()
-        env['ROOP_SERVER_SHARE'] = 'true'
+        # Starte Roop neu
+        process = subprocess.Popen(["python", "run.py"], 
+                                 stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE,
+                                 universal_newlines=True)
         
-        # Starte Roop neu mit Share Option
-        ROOP_PROCESS = subprocess.Popen(
-            ['python', 'run.py'],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True
-        )
-        
-        # Warte und suche nach der öffentlichen URL
-        time.sleep(10)
-        for line in ROOP_PROCESS.stdout:
+        # Warte auf den Start und suche nach der URL
+        for i in range(30):  # 30 Sekunden Timeout
+            line = process.stdout.readline()
             if "gradio.live" in line:
-                return f"Roop neu gestartet. Öffentliche URL: {line.strip()}"
+                return f"Roop neu gestartet. Neue URL: {line.strip()}"
+            time.sleep(1)
             
-        return "Roop wurde neu gestartet, aber keine öffentliche URL gefunden."
+        return "Roop wurde neu gestartet. Bitte schaue in der Konsolenausgabe nach der neuen URL."
+        
     except Exception as e:
         return f"Fehler beim Neustarten von Roop: {str(e)}"
 
@@ -82,6 +72,11 @@ with gr.Blocks(title="Roop Admin Interface für Colab") as admin_interface:
         with gr.Column(scale=1):
             restart_btn = gr.Button("Restart Roop", variant="primary")
             status_output = gr.Textbox(label="Status", interactive=False)
+            gr.Markdown("""
+            **Hinweis zum Neustart:**
+            1. Nach dem Klick auf 'Restart Roop' wird die neue URL hier angezeigt
+            2. Öffne die neue URL in einem neuen Tab
+            """)
             
     # Event Handler
     download_btn.click(create_zip_from_output, outputs=status_download)
@@ -90,10 +85,7 @@ with gr.Blocks(title="Roop Admin Interface für Colab") as admin_interface:
 # Starte das Admin Interface
 if __name__ == "__main__":
     # Starte zuerst Roop
-    env = os.environ.copy()
-    env['ROOP_SERVER_SHARE'] = 'true'
-    
-    ROOP_PROCESS = subprocess.Popen(['python', 'run.py'], env=env)
+    process = subprocess.Popen(["python", "run.py"])
     
     # Warte kurz damit Roop starten kann
     time.sleep(5)
