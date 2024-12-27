@@ -43,6 +43,20 @@ def faceswap_tab():
     global no_face_choices, previewimage
 
     with gr.Tab("🎭 Face Swap"):
+        # Versteckte Dummy-Elemente für Kompatibilität
+        ui.globals.ui_selected_enhancer = gr.Dropdown(
+            choices=["None"],
+            value="None", 
+            visible=False,
+            label="Hidden Enhancer"
+        )
+        ui.globals.ui_upscale = gr.Dropdown(
+            choices=["512px"],
+            value="512px",
+            visible=False,
+            label="Hidden Upscale"
+        )
+
         with gr.Row(variant='panel'):
             with gr.Column(scale=2):
                 with gr.Row():
