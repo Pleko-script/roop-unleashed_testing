@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import gc
+import shutil
 import zipfile
 import gradio as gr
 
@@ -10,11 +11,10 @@ import roop.metadata
 import roop.utilities as util
 import ui.globals as uii
 
-# Settings + core (für pre_check etc.)
 from settings import Settings
 from roop.core import pre_check, decode_execution_providers, set_display_ui
 
-# Deine Tabs
+# Deine Tabs:
 from ui.tabs.faceswap_tab import faceswap_tab
 from ui.tabs.livecam_tab import livecam_tab
 from ui.tabs.facemgr_tab import facemgr_tab
@@ -23,17 +23,49 @@ from ui.tabs.settings_tab import settings_tab
 
 OUTPUT_PATH = "output"
 
+##############################################################################
+# 1) Einfaches Logging-System:
+#    - Wir sammeln Logs in LISTE, fügen per logger(msg) neue Zeilen hinzu.
+#    - "poll_logs(console_value)" hängt neue Zeilen an.
+##############################################################################
+LOG_BUFFER = []
+
+def logger(msg: str):
+    """
+    Statt print(...) => logger(...). 
+    So sammeln wir Meldungen an einer Stelle, 
+    die wir im Admin-Tab pollend darstellen.
+    """
+    LOG_BUFFER.append(msg + "\n")
+
+def poll_logs(console_str):
+    """
+    Alle 2s gerufen: Nimmt alles aus LOG_BUFFER, 
+    hängt es ans Ende des console_str (Textbox-Wert),
+    und gibt console_str zurück.
+    """
+    if LOG_BUFFER:
+        # logs zusammensetzen
+        newlogs = "".join(LOG_BUFFER)
+        console_str += newlogs
+        LOG_BUFFER.clear()
+    return console_str
+
+##############################################################################
+# 2) Admin-Funktionen
+##############################################################################
+
 def create_zip_for_download():
     """
-    Erstellt ein ZIP 'output_files.zip' aus dem 'output'-Ordner
-    und gibt den Dateipfad zurück. Gradio legt daraus einen Download-Link an.
+    Erstellt 'output_files.zip' im OUTPUT_PATH
+    und gibt den Pfad an Gradio zurück => Download-Link.
     """
     if not os.path.exists(OUTPUT_PATH):
-        return None  # oder raise Exception("Output existiert nicht.")
+        logger("create_zip_for_download: Kein output-Ordner!")
+        return None
 
     zip_path = os.path.join(OUTPUT_PATH, "output_files.zip")
     try:
-        # Alte ZIP ggf. löschen:
         if os.path.isfile(zip_path):
             os.remove(zip_path)
 
@@ -45,22 +77,22 @@ def create_zip_for_download():
                     file_path = os.path.join(root, f)
                     arcname = os.path.relpath(file_path, OUTPUT_PATH)
                     zipf.write(file_path, arcname)
-        # Für Gradio: Return den Pfad. Dann erzeugt Gradio ein Download-Link in der UI.
+        logger(f"ZIP erstellt: {zip_path}")
         return zip_path
     except Exception as e:
-        # Falls was schief geht, return None (kein Downloadlink)
+        logger(f"ZIP-Fehler: {str(e)}")
         return None
-
 
 def reset_roop():
     """
-    Soft-Neustart: Leert globale Listen, GPU-Cache etc.
+    Soft-Neustart: 
+    - Leere roop-Globale, 
+    - GPU-Cache, 
+    - etc.
     """
-    # Beispiel: Leere roop-spezifische Globals
     roop.globals.INPUT_FACESETS.clear()
     roop.globals.TARGET_FACES.clear()
 
-    # GPU-Cache
     try:
         import torch
         torch.cuda.empty_cache()
@@ -68,14 +100,29 @@ def reset_roop():
         pass
     gc.collect()
 
+    logger("roop: Soft-Reset durchgeführt.")
     return "roop wurde neu initialisiert."
 
+def clear_output_folder():
+    """
+    Löscht den gesamten 'output'-Ordner und legt ihn neu an.
+    """
+    try:
+        if os.path.isdir(OUTPUT_PATH):
+            shutil.rmtree(OUTPUT_PATH)
+        os.makedirs(OUTPUT_PATH, exist_ok=True)
+        logger(f"Output-Folder '{OUTPUT_PATH}' wurde geleert.")
+        return "Output-Folder wurde geleert."
+    except Exception as e:
+        logger(f"Fehler beim Clearen: {str(e)}")
+        return f"Fehler beim Clearen: {str(e)}"
+
+##############################################################################
+# 3) Vorbereitungen (ENV)
+##############################################################################
 
 def prepare_environment():
-    """
-    Legt Output- und Temp-Verzeichnisse an, basierend auf roop.globals.CFG.
-    """
-    roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
+    roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), OUTPUT_PATH))
     os.makedirs(roop.globals.output_path, exist_ok=True)
 
     if not roop.globals.CFG.use_os_temp_folder:
@@ -86,35 +133,42 @@ def prepare_environment():
     os.environ['GRADIO_ANALYTICS_ENABLED'] = '0'
 
 
+##############################################################################
+# 4) Main-Funktion => Alle Tabs => .launch(share=...) 
+##############################################################################
+
 def run_unified():
     """
-    Gesamt-Funktion, die (1) CFG + Model-Downloads vorbereitet,
-    (2) ein Gradio-Interface mit Admin-Tab + roop-Tabs startet,
-    (3) nur 1x .launch(share=...) => 1x .gradio.live.
+    Ein einziges Gradio-Interface mit:
+    - Admin-Tab (Reset, Clear Output, Download ZIP, Log-Console)
+    - roop Tabs (Faceswap, etc.)
     """
-    # Falls roop.globals.CFG noch None ist => initialisieren
+    # roop.globals.CFG laden
     if roop.globals.CFG is None:
         roop.globals.CFG = Settings("config.yaml")  # oder config_colab.yaml
 
-    # Download fehlender Models:
+    # Model-Downloads => pre_check()
     if not pre_check():
         print("Fehler: pre_check() fehlgeschlagen.")
         return
 
-    # Env anlegen
+    # env
     prepare_environment()
 
-    # roop-Ausgabe in Gradio-Info umleiten
-    set_display_ui(lambda msg: gr.Info(msg))
+    # roop-Ausgabe in Info => oder nutze 'logger' falls gewünscht
+    set_display_ui(lambda msg: logger(msg))
 
-    # GPU/CPU Check
+    # GPU/CPU
     if roop.globals.CFG.provider == "cuda" and not util.has_cuda_device():
         roop.globals.CFG.provider = "cpu"
+
+    from roop.core import decode_execution_providers
     roop.globals.execution_providers = decode_execution_providers([roop.globals.CFG.provider])
     gputype = util.get_device()
     if gputype == 'cuda':
-        util.print_cuda_info()
-    print(f'Using provider {roop.globals.execution_providers} - Device:{gputype}')
+        util.print_cuda_info()  # => prints => oder logger("...") via monkey-patch
+
+    logger(f'Using provider {roop.globals.execution_providers} - Device:{gputype}')
 
     mycss = """
     span {color: var(--block-info-text-color)}
@@ -125,7 +179,7 @@ def run_unified():
     .image-container.svelte-1l6wqyv {height: 100%}
     """
 
-    # Unser EINZIGES Gradio-Interface
+    # EIN Blocks => EIN .launch => EIN .gradio.live
     with gr.Blocks(
         title=f'{roop.metadata.name} {roop.metadata.version}',
         theme=roop.globals.CFG.selected_theme,
@@ -135,22 +189,39 @@ def run_unified():
 
         gr.Markdown(f"## {roop.metadata.name} {roop.metadata.version} - Unified Admin + roop")
 
-        # ADMIN-TAB
+        # Admin-Tab
         with gr.Tab("Admin"):
             gr.Markdown("### roop-Admin-Funktionen")
 
-            # 1) Reset roop
-            btn_reset = gr.Button("Neustart roop-Anwendung")
-            txt_reset = gr.Textbox("", label="Reset Status", interactive=False)
+            # Row 1: Reset-Button, Clear-Button
+            with gr.Row():
+                btn_reset = gr.Button("Neustart roop-Anwendung")
+                txt_reset = gr.Textbox("", label="Reset Status", interactive=False)
+
+                btn_clear = gr.Button("Clear Output-Folder")
+                txt_clear = gr.Textbox("", label="Clear Status", interactive=False)
+
             btn_reset.click(fn=reset_roop, outputs=txt_reset)
+            btn_clear.click(fn=clear_output_folder, outputs=txt_clear)
 
-            # 2) Download ZIP
-            btn_zip = gr.Button("Download ZIP von 'output'")
-            # => Wir geben an Gradio ein "File"-Objekt zurück => Download-Link
-            file_zip = gr.File(label="ZIP zum Herunterladen", interactive=False)
-
-            # Klick => create_zip_for_download => Pfad => Gradio macht Download-Link
+            # Row 2: Download ZIP
+            with gr.Row():
+                btn_zip = gr.Button("Download ZIP vom 'output'")
+                file_zip = gr.File(label="ZIP-Download", interactive=False)
             btn_zip.click(fn=create_zip_for_download, outputs=file_zip)
+
+            # Row 3: Konsole
+            # - console => zeigt Logs an
+            console = gr.Textbox(
+                label="Konsole / Logs",
+                value="",
+                lines=10,
+                max_lines=20,
+                interactive=False
+            )
+            # Im Admin-Tab => load(...) => poll_logs alle 2 sek => console
+            unified_app.load(fn=poll_logs, inputs=[console], outputs=[console], every=2)
+
 
         # roop-Tabs
         faceswap_tab()
@@ -159,9 +230,13 @@ def run_unified():
         extras_tab()
         settings_tab()
 
-    # Start => .gradio.live
+    # Start => .gradio.live => Kollege klickt => Admin => 
+    #  - Reset roop, 
+    #  - Clear output, 
+    #  - Download zip, 
+    #  - Logs
     unified_app.queue().launch(
-        share=roop.globals.CFG.server_share,  # True/False -> config.yaml
+        share=roop.globals.CFG.server_share,  # True/False laut config
         server_name=roop.globals.CFG.server_name if roop.globals.CFG.server_name else None,
         server_port=roop.globals.CFG.server_port if roop.globals.CFG.server_port > 0 else None,
         ssl_verify=False,
