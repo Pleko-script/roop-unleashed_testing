@@ -195,7 +195,13 @@ def faceswap_tab():
             with gr.Column(scale=1):
                 max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
             with gr.Column(scale=1):
-                ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
+                # Verstecktes Dropdown mit festem Wert 512px
+                ui.globals.ui_upscale = gr.Dropdown(
+                    ["512px"], 
+                    value="512px",
+                    visible=False,
+                    label="Hidden Upscale"
+                )
             with gr.Column(scale=2):
                 ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
 
