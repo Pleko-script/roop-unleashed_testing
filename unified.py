@@ -181,13 +181,13 @@ def run_unified():
 
     # EIN Blocks => EIN .launch => EIN .gradio.live
     with gr.Blocks(
-        title=f'{roop.metadata.name} {roop.metadata.version}',
+        title="roop",
         theme=roop.globals.CFG.selected_theme,
         css=mycss,
         delete_cache=(60, 86400)
     ) as unified_app:
 
-        gr.Markdown(f"## {roop.metadata.name} {roop.metadata.version} - Unified Admin + roop")
+        gr.Markdown("## roop")
 
         # Admin-Tab
         with gr.Tab("Admin"):

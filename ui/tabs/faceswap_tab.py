@@ -174,7 +174,8 @@ def faceswap_tab():
             with gr.Column(scale=1):
                 num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
             with gr.Column(scale=2):
-                ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "DMDNet", "GFPGAN", "GPEN", "Restoreformer++"], value="None", label="Select post-processing")
+                roop.globals.selected_enhancer = "None"
+                roop.globals.subsample_size = 512
 
         with gr.Row(variant='panel'):
             with gr.Column(scale=1):
@@ -251,7 +252,7 @@ def faceswap_tab():
     bt_preview_mask.click(fn=on_preview_mask, inputs=[preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
     start_event = bt_start.click(fn=start_swap, 
-        inputs=[output_method, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
+        inputs=[output_method, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
                     roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
     after_swap_event = start_event.success(fn=on_resultfiles_finished, inputs=[resultfiles], outputs=[resultimage, resultvideo])
@@ -554,13 +555,13 @@ def on_preview_frame_changed(frame_num, files, fake_preview, enhancer, detection
         return gr.Image(value=util.convert_to_gradio(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
     roop.globals.face_swap_mode = translate_swap_mode(detection)
-    roop.globals.selected_enhancer = enhancer
+    roop.globals.selected_enhancer = "None"
     roop.globals.distance_threshold = face_distance
     roop.globals.blend_ratio = blend_ratio
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = auto_rotate
-    roop.globals.subsample_size = int(upsample[:3])
+    roop.globals.subsample_size = 512
 
 
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
@@ -681,8 +682,8 @@ def translate_swap_mode(dropdown_text):
     return "all"
 
 
-def start_swap( output_method, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
-                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
+def start_swap( output_method, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
+                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, imagemask, progress=gr.Progress()):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
     global is_processing, list_files_process
@@ -699,7 +700,7 @@ def start_swap( output_method, enhancer, detection, keep_frames, wait_after_extr
 
     prepare_environment()
 
-    roop.globals.selected_enhancer = enhancer
+    roop.globals.selected_enhancer = "None" 
     roop.globals.target_path = None
     roop.globals.distance_threshold = face_distance
     roop.globals.blend_ratio = blend_ratio
@@ -710,7 +711,7 @@ def start_swap( output_method, enhancer, detection, keep_frames, wait_after_extr
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = autorotate
-    roop.globals.subsample_size = int(upsample[:3])
+    roop.globals.subsample_size = 512
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
 
     if roop.globals.face_swap_mode == 'selected':
