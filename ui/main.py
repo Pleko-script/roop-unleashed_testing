@@ -12,8 +12,7 @@ from ui.tabs.facemgr_tab import facemgr_tab
 from ui.tabs.extras_tab import extras_tab
 from ui.tabs.settings_tab import settings_tab
 
-
-# Einige Default-Values werden von roop-Unleashed verwendet
+# Standard-Flags von roop
 roop.globals.keep_fps = None
 roop.globals.keep_frames = None
 roop.globals.skip_audio = None
@@ -22,12 +21,12 @@ roop.globals.use_batch = None
 
 def prepare_environment():
     """
-    Erzeugt das 'output'-Verzeichnis, setzt TEMP-Variablen etc.
+    Output-, Temp-Verzeichnisse anlegen usw.
     """
     roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
     os.makedirs(roop.globals.output_path, exist_ok=True)
     if not roop.globals.CFG.use_os_temp_folder:
-        # Auf dem local Dir basierender temp-Folder
+        # custom TEMP
         os.environ["TEMP"] = os.environ["TMP"] = os.path.abspath(os.path.join(os.getcwd(), "temp"))
     os.makedirs(os.environ["TEMP"], exist_ok=True)
     os.environ["GRADIO_TEMP_DIR"] = os.environ["TEMP"]
@@ -36,15 +35,15 @@ def prepare_environment():
 
 def run():
     """
-    Hier wird das Haupt-GUI (roop unleashed) gebaut und gestartet.
-    Am Ende drucken wir den Link 'ROOPURL::<share_url>' für dein Admin-Interface.
+    Baut das roop-unleashed GUI mithilfe der Tabs in /ui/tabs/ auf,
+    startet Gradio und druckt am Ende (falls share=True)
+    eine Zeile 'ROOPURL::<share_link>'.
     """
     from roop.core import decode_execution_providers, set_display_ui
 
     prepare_environment()
     set_display_ui(show_msg)
 
-    # Falls "cuda" konfiguriert, aber keine GPU verfügbar => fallback CPU
     if roop.globals.CFG.provider == "cuda" and not util.has_cuda_device():
         roop.globals.CFG.provider = "cpu"
 
@@ -58,7 +57,6 @@ def run():
     run_server = True
     uii.ui_restart_server = False
 
-    # Beispiel-CSS – kann man anpassen, falls gewünscht
     mycss = """
         span {color: var(--block-info-text-color)}
         #fixedheight {
@@ -77,7 +75,6 @@ def run():
         if server_port <= 0:
             server_port = None
 
-        # Wenn in config.yaml "server_share: true" gesetzt ist => share=True
         ssl_verify = False if server_name == '0.0.0.0' else True
 
         with gr.Blocks(
@@ -90,10 +87,9 @@ def run():
                 gr.Markdown(
                     f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/C0untFloyd/roop-unleashed)"
                 )
-                # Versionen
                 gr.HTML(util.create_version_html(), elem_id="versions")
 
-            # Tabs aufbauen
+            # Tabs für roop:
             faceswap_tab()
             livecam_tab()
             facemgr_tab()
@@ -104,8 +100,8 @@ def run():
         uii.ui_restart_server = False
 
         try:
-            # Wichtig: Hier holen wir uns local_url, share_url
-            local_url, share_url = ui.queue().launch(
+            # Starte Gradio und versuche, den Rückgabewert res zu analysieren
+            res = ui.queue().launch(
                 inbrowser=launch_browser,
                 server_name=server_name,
                 server_port=server_port,
@@ -115,7 +111,21 @@ def run():
                 show_error=True
             )
 
-            # **Zusatz**: Link in stdout ausgeben => "ROOPURL::<Link>"
+            # Debug: mal schauen, was res ist
+            print("Result from launch():", res)
+
+            # Anfänglich: local_url, share_url = ui.launch(...) => evtl. geht das nicht mehr
+            # Wir parsen res, um nur share_url zu bekommen
+            share_url = None
+            if isinstance(res, tuple):
+                # typischer Fall: (local, share)
+                if len(res) >= 2:
+                    share_url = res[1]
+            elif isinstance(res, str):
+                # Nur 1 string (vermutl. local URL)
+                share_url = None
+
+            # Falls share_url existiert => in der Form "ROOPURL::<link>" ausgeben
             if share_url:
                 print(f"ROOPURL::{share_url}")
             else:
@@ -127,19 +137,19 @@ def run():
             run_server = False
 
         try:
-            # Warte im Sekundentakt, bis ui_restart_server getriggert wird
+            # Warte, bis user evtl. ui_restart_server => True
             while not uii.ui_restart_server:
                 time.sleep(1.0)
         except (KeyboardInterrupt, OSError):
             print("Keyboard interruption in main thread... closing server.")
             run_server = False
 
-        # UI schließen (gradio blocks)
         ui.close()
 
 
 def show_msg(msg: str):
     """
-    Für roop.core.set_display_ui: gibt Meldungen als gr.Info aus.
+    Falls roop.core.set_display_ui(...) -> 
+    Alle Meldungen hier per gr.Info ausgeben.
     """
     gr.Info(msg)
