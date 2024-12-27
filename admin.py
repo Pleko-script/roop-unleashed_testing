@@ -7,6 +7,7 @@ import zipfile
 import time
 from google.colab import files
 
+# Globale Variablen
 ROOP_PROCESS = None
 LOG_QUEUE = queue.Queue()
 STOP_THREAD = False
@@ -35,7 +36,7 @@ def create_zip_from_output():
         files.download(zip_path)
         return "ZIP wird heruntergeladen..."
     except Exception as e:
-        return f"Fehler beim Erstellen des ZIP: {e}"
+        return f"Fehler beim Erstellen des ZIP: {str(e)}"
 
 
 def roop_logger(proc):
@@ -55,15 +56,20 @@ def roop_logger(proc):
     print("Logger-Thread beendet.")
 
 
-def start_stop_roop(console):
+def start_stop_roop(console_str):
     """
     Startet oder stoppt den 'roop-unleashed'-Prozess (run.py).
-    Nutzt console (Textbox-Inhalt) als Ein-/Ausgabe-String.
+    console_str ist der aktuelle Inhalt der 'Konsole'-Textbox (als String).
+    Wir geben aktualisierte Werte zurück:
+      1) Button-Label
+      2) Status-Textbox
+      3) Neuer Konsolen-String
     """
     global ROOP_PROCESS, STOP_THREAD
 
     if ROOP_PROCESS is None:
-        console.value = "Starte roop-unleashed...\n"
+        # Start
+        console_str = "Starte roop-unleashed...\n"
         ROOP_PROCESS = subprocess.Popen(
             ["python", "run.py"],
             stdout=subprocess.PIPE,
@@ -73,31 +79,33 @@ def start_stop_roop(console):
         )
         STOP_THREAD = False
         threading.Thread(target=roop_logger, args=(ROOP_PROCESS,), daemon=True).start()
-        return "Stop Roop", "roop-unleashed gestartet", console.value
+        return "Stop Roop", "roop-unleashed gestartet", console_str
     else:
-        console.value += "\nStoppe roop-unleashed...\n"
+        # Stop
+        console_str += "\nStoppe roop-unleashed...\n"
         STOP_THREAD = True
         ROOP_PROCESS.terminate()
         time.sleep(1)
         if ROOP_PROCESS.poll() is None:
             ROOP_PROCESS.kill()
         ROOP_PROCESS = None
-        return "Start Roop", "roop-unleashed gestoppt", console.value
+        return "Start Roop", "roop-unleashed gestoppt", console_str
 
 
-def poll_logs(console):
+def poll_logs(console_str):
     """
-    Alle x Sekunden aufgerufen, um neue Log-Zeilen aus LOG_QUEUE
-    an das Konsolen-Textbox anzuhängen.
+    Alle 2 Sekunden aufgerufen, um neue Log-Zeilen
+    aus LOG_QUEUE an das Konsolen-Textbox anzuhängen.
     """
     logs = []
     while not LOG_QUEUE.empty():
         logs.append(LOG_QUEUE.get_nowait())
     if logs:
-        console.value += "".join(logs)
-    return console.value
+        console_str += "".join(logs)
+    return console_str
 
 
+# Gradio-Interface erstellen
 with gr.Blocks(title="Roop Admin Interface für Colab") as admin_interface:
     gr.Markdown("# Admin Interface für roop-unleashed")
 
@@ -110,12 +118,29 @@ with gr.Blocks(title="Roop Admin Interface für Colab") as admin_interface:
         status_box = gr.Textbox(label="Status", value="Roop ist gestoppt", interactive=False, lines=1)
         console = gr.Textbox(label="Konsole", value="", interactive=False, lines=10)
 
-    download_btn.click(fn=create_zip_from_output, outputs=download_info)
-    start_btn.click(fn=start_stop_roop, inputs=[console], outputs=[start_btn, status_box, console])
+    # Download-Button -> ZIP erstellen
+    download_btn.click(
+        fn=create_zip_from_output,
+        outputs=download_info
+    )
+
+    # Start-/Stop-Button -> Subprozess starten/stoppen
+    # Wir übergeben console (string), bekommen (button_label, status_text, console_str)
+    start_btn.click(
+        fn=start_stop_roop,
+        inputs=[console],
+        outputs=[start_btn, status_box, console]
+    )
 
     # Poll-Funktion alle 2s, um Logs ins Konsole-Textbox zu übertragen
-    admin_interface.load(fn=poll_logs, inputs=[console], outputs=[console], every=2)
+    admin_interface.load(
+        fn=poll_logs,
+        inputs=[console],
+        outputs=[console],
+        every=2
+    )
 
 
 if __name__ == "__main__":
+    # Starte das Gradio-Interface
     admin_interface.launch(share=True)
