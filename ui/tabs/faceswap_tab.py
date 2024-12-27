@@ -43,20 +43,6 @@ def faceswap_tab():
     global no_face_choices, previewimage
 
     with gr.Tab("🎭 Face Swap"):
-        # Versteckte Dummy-Elemente für Kompatibilität
-        ui.globals.ui_selected_enhancer = gr.Dropdown(
-            choices=["None"],
-            value="None", 
-            visible=False,
-            label="Hidden Enhancer"
-        )
-        ui.globals.ui_upscale = gr.Dropdown(
-            choices=["512px"],
-            value="512px",
-            visible=False,
-            label="Hidden Upscale"
-        )
-
         with gr.Row(variant='panel'):
             with gr.Column(scale=2):
                 with gr.Row():
@@ -188,20 +174,13 @@ def faceswap_tab():
             with gr.Column(scale=1):
                 num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
             with gr.Column(scale=2):
-                roop.globals.selected_enhancer = "None"
-                roop.globals.subsample_size = 512
+                ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "DMDNet", "GFPGAN", "GPEN", "Restoreformer++"], value="None", label="Select post-processing")
 
         with gr.Row(variant='panel'):
             with gr.Column(scale=1):
                 max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
             with gr.Column(scale=1):
-                # Verstecktes Dropdown mit festem Wert 512px
-                ui.globals.ui_upscale = gr.Dropdown(
-                    ["512px"], 
-                    value="512px",
-                    visible=False,
-                    label="Hidden Upscale"
-                )
+                ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
             with gr.Column(scale=2):
                 ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
 
@@ -235,7 +214,7 @@ def faceswap_tab():
     previewinputs = [preview_frame_num, bt_destfiles, fake_preview, ui.globals.ui_selected_enhancer, selected_face_detection,
                         max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text, no_face_action, vr_mode, autorotate, maskimage, chk_showmaskoffsets, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale]
     previewoutputs = [previewimage, maskimage, preview_frame_num] 
-    input_faces.select(fn=on_select_input_face, inputs=[], outputs=[]).success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
+    input_faces.select(on_select_input_face, None, None).success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
     
     bt_move_left_input.click(fn=move_selected_input, inputs=[bt_move_left_input], outputs=[input_faces])
     bt_move_right_input.click(fn=move_selected_input, inputs=[bt_move_right_input], outputs=[input_faces])
@@ -272,7 +251,7 @@ def faceswap_tab():
     bt_preview_mask.click(fn=on_preview_mask, inputs=[preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
     start_event = bt_start.click(fn=start_swap, 
-        inputs=[output_method, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
+        inputs=[output_method, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
                     roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
     after_swap_event = start_event.success(fn=on_resultfiles_finished, inputs=[resultfiles], outputs=[resultimage, resultvideo])
@@ -575,13 +554,13 @@ def on_preview_frame_changed(frame_num, files, fake_preview, enhancer, detection
         return gr.Image(value=util.convert_to_gradio(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
     roop.globals.face_swap_mode = translate_swap_mode(detection)
-    roop.globals.selected_enhancer = "None"
+    roop.globals.selected_enhancer = enhancer
     roop.globals.distance_threshold = face_distance
     roop.globals.blend_ratio = blend_ratio
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = auto_rotate
-    roop.globals.subsample_size = 512
+    roop.globals.subsample_size = int(upsample[:3])
 
 
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
@@ -702,8 +681,8 @@ def translate_swap_mode(dropdown_text):
     return "all"
 
 
-def start_swap( output_method, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
-                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, imagemask, progress=gr.Progress()):
+def start_swap( output_method, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
+                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
     global is_processing, list_files_process
@@ -720,7 +699,7 @@ def start_swap( output_method, detection, keep_frames, wait_after_extraction, sk
 
     prepare_environment()
 
-    roop.globals.selected_enhancer = "None" 
+    roop.globals.selected_enhancer = enhancer
     roop.globals.target_path = None
     roop.globals.distance_threshold = face_distance
     roop.globals.blend_ratio = blend_ratio
@@ -731,7 +710,7 @@ def start_swap( output_method, detection, keep_frames, wait_after_extraction, sk
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = autorotate
-    roop.globals.subsample_size = 512
+    roop.globals.subsample_size = int(upsample[:3])
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
 
     if roop.globals.face_swap_mode == 'selected':
